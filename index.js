@@ -7,6 +7,9 @@ const token = process.env.BOT_TOKEN || '6903487941:AAGFXw4074lMGMzc_HOHIeJQGuylD
 const bot = new TelegramBot(token, { polling: true });
 const ADMIN_ID = 700217964;
 
+// تخزين حالات المستخدمين لمنع انهيار السيرفر
+const userStates = {};
+
 // --- تهيئة قاعدة البيانات ---
 const db = new sqlite3.Database('users.db', (err) => {
     if (err) console.error('خطأ في فتح قاعدة البيانات:', err.message);
@@ -138,17 +141,19 @@ async function sendStartMessage(chatId, userId) {
 }
 
 bot.onText(/\/start/, (msg) => {
+    delete userStates[msg.from.id];
     sendStartMessage(msg.chat.id, msg.from.id);
 });
 
-// معالجة الأزرار مع الاستجابة الفورية لمنع أي تعليق أو توقف
+// معالجة الأزرار بشكل آمن وفوري
 bot.on('callback_query', async (call) => {
     const userId = call.from.id;
     const chatId = call.message.chat.id;
     const messageId = call.message.message_id;
 
+    bot.answerCallbackQuery(call.id).catch(() => {});
+
     if (call.data.startsWith("lang_")) {
-        bot.answerCallbackQuery(call.id).catch(() => {});
         const newLang = call.data.split("_")[1];
         setUserLang(userId, newLang);
         getChannel((channel) => {
@@ -177,11 +182,11 @@ bot.on('callback_query', async (call) => {
         });
     } 
     else if (call.data === "rem_chan" && userId === ADMIN_ID) {
-        bot.answerCallbackQuery(call.id, { text: "تمت إزالة القناة بنجاح ✅", show_alert: true }).catch(() => {});
-        setChannel("off");
+        setChannel("off", () => {
+            bot.sendMessage(chatId, "تمت إزالة القناة بنجاح ✅").catch(() => {});
+        });
     } 
     else if (call.data === "check") {
-        bot.answerCallbackQuery(call.id).catch(() => {});
         getChannel(async (channel) => {
             if (await checkSub(userId, channel)) {
                 bot.deleteMessage(chatId, messageId).catch(() => {});
@@ -192,18 +197,8 @@ bot.on('callback_query', async (call) => {
         });
     } 
     else if (call.data === "set_chan" && userId === ADMIN_ID) {
-        bot.answerCallbackQuery(call.id).catch(() => {});
-        bot.sendMessage(chatId, "أرسل يوزر القناة الجديد (بدون @):").then(() => {
-            const listener = (msg) => {
-                if (msg.from.id === userId && msg.text) {
-                    setChannel(msg.text, () => {
-                        bot.sendMessage(chatId, "تم التحديث ✅").catch(() => {});
-                    });
-                    bot.removeListener("message", listener);
-                }
-            };
-            bot.on("message", listener);
-        }).catch(() => {});
+        userStates[userId] = 'waiting_channel';
+        bot.sendMessage(chatId, "أرسل يوزر القناة الجديد (بدون @):").catch(() => {});
     } 
     else if (call.data === "stats" && userId === ADMIN_ID) {
         getAllUsers((users) => {
@@ -211,32 +206,40 @@ bot.on('callback_query', async (call) => {
         });
     } 
     else if (call.data === "broadcast" && userId === ADMIN_ID) {
-        bot.answerCallbackQuery(call.id).catch(() => {});
-        bot.sendMessage(chatId, "أرسل الرسالة للإذاعة:").then(() => {
-            const listener = (msg) => {
-                if (msg.from.id === userId && msg.text) {
-                    getAllUsers((users) => {
-                        users.forEach((u) => {
-                            bot.sendMessage(u, msg.text).catch(() => {});
-                        });
-                        bot.sendMessage(chatId, "تمت الإذاعة بنجاح ✅").catch(() => {});
-                    });
-                    bot.removeListener("message", listener);
-                }
-            };
-            bot.on("message", listener);
-        }).catch(() => {});
-    } 
-    else {
-        bot.answerCallbackQuery(call.id).catch(() => {});
+        userStates[userId] = 'waiting_broadcast';
+        bot.sendMessage(chatId, "أرسل الرسالة للإذاعة:").catch(() => {});
     }
 });
 
+// معالجة الرسائل العادية ومدخلات الإدارة بنظام الحالات الآمن
 bot.on('message', async (msg) => {
-    if (!msg.text || msg.text.startsWith("/")) return;
+    if (!msg.text) return;
     const userId = msg.from.id;
     const chatId = msg.chat.id;
 
+    if (msg.text.startsWith("/")) return;
+
+    // التعامل مع حالات الإدارة (تغيير القناة أو الإذاعة)
+    if (userStates[userId] === 'waiting_channel' && userId === ADMIN_ID) {
+        delete userStates[userId];
+        setChannel(msg.text, () => {
+            bot.sendMessage(chatId, "تم تحديث القناة بنجاح ✅").catch(() => {});
+        });
+        return;
+    }
+
+    if (userStates[userId] === 'waiting_broadcast' && userId === ADMIN_ID) {
+        delete userStates[userId];
+        getAllUsers((users) => {
+            users.forEach((u) => {
+                bot.sendMessage(u, msg.text).catch(() => {});
+            });
+            bot.sendMessage(chatId, "تمت الإذاعة لجميع المستخدمين بنجاح ✅").catch(() => {});
+        });
+        return;
+    }
+
+    // التحقق من الاشتراك الإجباري وتحميل الفيديوهات
     getChannel(async (channel) => {
         if (!(await checkSub(userId, channel))) {
             return sendStartMessage(chatId, userId);
@@ -267,4 +270,4 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('رفض غير معالج:', reason);
 });
 
-console.log("البوت يعمل الآن بكفاءة عالية وبدون توقف...");
+console.log("البوت يعمل الآن بثبات تام وبدون أي أخطاء...");
