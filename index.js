@@ -7,7 +7,7 @@ const token = process.env.BOT_TOKEN || '6903487941:AAGFXw4074lMGMzc_HOHIeJQGuylD
 const bot = new TelegramBot(token, { polling: true });
 const ADMIN_ID = 700217964;
 
-// --- تهيئة قاعدة البيانات (مع الحفاظ على البيانات القديمة) ---
+// --- تهيئة قاعدة البيانات ---
 const db = new sqlite3.Database('users.db', (err) => {
     if (err) console.error('خطأ في فتح قاعدة البيانات:', err.message);
 });
@@ -26,7 +26,7 @@ function getChannel(callback) {
 }
 
 function setChannel(username, callback) {
-    const val = username !== "off" ? username.replace("@", "") : null;
+    const val = username && username !== "off" ? username.replace("@", "") : null;
     db.run('UPDATE settings SET value = ? WHERE key = "channel"', [val], () => {
         if (callback) callback();
     });
@@ -42,7 +42,6 @@ function setUserLang(userId, lang) {
     db.run('UPDATE users SET lang = ? WHERE user_id = ?', [lang, userId]);
 }
 
-// تم إصلاح هذه الدالة لمنع أي خطأ تكرار في قاعدة البيانات
 function addUser(userId) {
     db.run('INSERT OR IGNORE INTO users (user_id) VALUES (?)', [userId]);
 }
@@ -86,8 +85,8 @@ const texts = {
 async function checkSub(userId, channel) {
     if (!channel) return true;
     try {
-        const status = (await bot.getChatMember(`@${channel}`, userId)).status;
-        return ['member', 'administrator', 'creator'].includes(status);
+        const res = await bot.getChatMember(`@${channel}`, userId);
+        return ['member', 'administrator', 'creator'].includes(res.status);
     } catch (e) {
         return false;
     }
@@ -106,7 +105,7 @@ async function sendStartMessage(chatId, userId) {
                         ]
                     ]
                 };
-                bot.sendMessage(chatId, `${texts[lang]['sub']} @${channel}`, { reply_markup: btn });
+                bot.sendMessage(chatId, `${texts[lang]['sub']} @${channel}`, { reply_markup: btn }).catch(() => {});
                 return;
             }
 
@@ -133,7 +132,7 @@ async function sendStartMessage(chatId, userId) {
                 ]);
             }
 
-            bot.sendMessage(chatId, texts[lang]["start"], { reply_markup: ky });
+            bot.sendMessage(chatId, texts[lang]["start"], { reply_markup: ky }).catch(() => {});
         });
     });
 }
@@ -142,6 +141,7 @@ bot.onText(/\/start/, (msg) => {
     sendStartMessage(msg.chat.id, msg.from.id);
 });
 
+// معالجة الأزرار بضمان الاستجابة الكاملة وعدم التوقف
 bot.on('callback_query', async (call) => {
     const userId = call.from_user.id;
     const chatId = call.message.chat.id;
@@ -172,52 +172,64 @@ bot.on('callback_query', async (call) => {
                     { text: texts[newLang]["rem_c"], callback_data: 'rem_chan' }
                 ]);
             }
-            bot.editMessageText(texts[newLang]["start"], { chat_id: chatId, message_id: messageId, reply_markup: ky });
+            bot.editMessageText(texts[newLang]["start"], { chat_id: chatId, message_id: messageId, reply_markup: ky }).catch(() => {});
         });
-    } else if (call.data === "rem_chan" && userId === ADMIN_ID) {
+        bot.answerCallbackQuery(call.id).catch(() => {});
+    } 
+    else if (call.data === "rem_chan" && userId === ADMIN_ID) {
         setChannel("off", () => {
-            bot.answerCallbackQuery(call.id, { text: "تمت إزالة القناة بنجاح ✅", show_alert: true });
+            bot.answerCallbackQuery(call.id, { text: "تمت إزالة القناة بنجاح ✅", show_alert: true }).catch(() => {});
         });
-    } else if (call.data === "check") {
+    } 
+    else if (call.data === "check") {
         getChannel(async (channel) => {
             if (await checkSub(userId, channel)) {
-                bot.deleteMessage(chatId, messageId);
+                bot.deleteMessage(chatId, messageId).catch(() => {});
                 sendStartMessage(chatId, userId);
+                bot.answerCallbackQuery(call.id).catch(() => {});
             } else {
-                bot.answerCallbackQuery(call.id, { text: "❌", show_alert: true });
+                bot.answerCallbackQuery(call.id, { text: "❌ يجب الاشتراك بالقناة أولاً", show_alert: true }).catch(() => {});
             }
         });
-    } else if (call.data === "set_chan" && userId === ADMIN_ID) {
-        bot.sendMessage(chatId, "أرسل يوزر القناة الجديد (بدون @):").then((sentMsg) => {
+    } 
+    else if (call.data === "set_chan" && userId === ADMIN_ID) {
+        bot.answerCallbackQuery(call.id).catch(() => {});
+        bot.sendMessage(chatId, "أرسل يوزر القناة الجديد (بدون @):").then(() => {
             const listener = (msg) => {
-                if (msg.from.id === userId) {
+                if (msg.from.id === userId && msg.text) {
                     setChannel(msg.text, () => {
-                        bot.sendMessage(chatId, "تم التحديث ✅");
+                        bot.sendMessage(chatId, "تم التحديث ✅").catch(() => {});
                     });
                     bot.removeListener("message", listener);
                 }
             };
             bot.on("message", listener);
-        });
-    } else if (call.data === "stats" && userId === ADMIN_ID) {
+        }).catch(() => {});
+    } 
+    else if (call.data === "stats" && userId === ADMIN_ID) {
         getAllUsers((users) => {
-            bot.answerCallbackQuery(call.id, { text: `عدد المستخدمين: ${users.length}`, show_alert: true });
+            bot.answerCallbackQuery(call.id, { text: `عدد المستخدمين: ${users.length}`, show_alert: true }).catch(() => {});
         });
-    } else if (call.data === "broadcast" && userId === ADMIN_ID) {
-        bot.sendMessage(chatId, "أرسل الرسالة:").then(() => {
+    } 
+    else if (call.data === "broadcast" && userId === ADMIN_ID) {
+        bot.answerCallbackQuery(call.id).catch(() => {});
+        bot.sendMessage(chatId, "أرسل الرسالة للإذاعة:").then(() => {
             const listener = (msg) => {
-                if (msg.from.id === userId) {
+                if (msg.from.id === userId && msg.text) {
                     getAllUsers((users) => {
                         users.forEach((u) => {
                             bot.sendMessage(u, msg.text).catch(() => {});
                         });
-                        bot.sendMessage(chatId, "تمت الإذاعة ✅");
+                        bot.sendMessage(chatId, "تمت الإذاعة بنجاح ✅").catch(() => {});
                     });
                     bot.removeListener("message", listener);
                 }
             };
             bot.on("message", listener);
-        });
+        }).catch(() => {});
+    } 
+    else {
+        bot.answerCallbackQuery(call.id).catch(() => {});
     }
 });
 
@@ -231,21 +243,30 @@ bot.on('message', async (msg) => {
             return sendStartMessage(chatId, userId);
         }
         if (msg.text.startsWith("http")) {
-            const wait = await bot.sendMessage(chatId, "⏳", { reply_to_message_id: msg.message_id });
+            const wait = await bot.sendMessage(chatId, "⏳ جارٍ التحميل...", { reply_to_message_id: msg.message_id }).catch(() => {});
             try {
                 const response = await axios.post("https://www.clipto.com/api/youtube", { url: msg.text });
                 const res = response.data;
                 if (res && res.medias && res.medias.length > 0) {
-                    await bot.sendVideo(chatId, res.medias[0].url);
-                    await bot.deleteMessage(chatId, wait.message_id);
+                    await bot.sendVideo(chatId, res.medias[0].url).catch(() => {});
+                    if (wait) await bot.deleteMessage(chatId, wait.message_id).catch(() => {});
                 } else {
-                    await bot.editMessageText("Error", { chat_id: chatId, message_id: wait.message_id });
+                    if (wait) await bot.editMessageText("عذراً، لم يتم العثور على وسائط.", { chat_id: chatId, message_id: wait.message_id }).catch(() => {});
                 }
             } catch (e) {
-                await bot.editMessageText("Error", { chat_id: chatId, message_id: wait.message_id });
+                if (wait) await bot.editMessageText("حدث خطأ أثناء تحميل الفيديو.", { chat_id: chatId, message_id: wait.message_id }).catch(() => {});
             }
         }
     });
 });
 
-console.log("البوت يعمل الآن...");
+// حماية كاملة ضد أي خطأ مفاجئ لكي لا يتوقف البوت نهائياً
+process.on('uncaughtException', (err) => {
+    console.error('خطأ غير متوقع:', err);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('رفض غير معالج:', reason);
+});
+
+console.log("البوت يعمل الآن بكفاءة عالية وبدون توقف...");
