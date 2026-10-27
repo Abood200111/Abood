@@ -3,23 +3,22 @@ const sqlite3 = require('sqlite3').verbose();
 const axios = require('axios');
 
 // --- الإعدادات ---
-// قراءة التوكن من متغيرات البيئة كما تنصح الاستضافة، أو وضعه مباشرة كاحتياط
 const token = process.env.BOT_TOKEN || '6903487941:AAGFXw4074lMGMzc_HOHIeJQGuylDW6iPE4';
 const bot = new TelegramBot(token, { polling: true });
 const ADMIN_ID = 700217964;
 
-// --- تهيئة قاعدة البيانات ---
+// --- تهيئة قاعدة البيانات (مع الحفاظ على البيانات القديمة) ---
 const db = new sqlite3.Database('users.db', (err) => {
     if (err) console.error('خطأ في فتح قاعدة البيانات:', err.message);
 });
 
 db.serialize(() => {
-    db.run('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY, lang TEXT DEFAULT "ar")');
+    db.run('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)');
+    db.run('ALTER TABLE users ADD COLUMN lang TEXT DEFAULT "ar"', (err) => { });
     db.run('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
     db.run('INSERT OR IGNORE INTO settings VALUES ("channel", "ABOJLQ")');
 });
 
-// دوال قاعدة البيانات
 function getChannel(callback) {
     db.get('SELECT value FROM settings WHERE key="channel"', [], (err, row) => {
         callback(row ? row.value : null);
@@ -35,7 +34,7 @@ function setChannel(username, callback) {
 
 function getUserLang(userId, callback) {
     db.get('SELECT lang FROM users WHERE user_id = ?', [userId], (err, row) => {
-        callback(row ? row.lang : "ar");
+        callback(row && row.lang ? row.lang : "ar");
     });
 }
 
@@ -43,12 +42,9 @@ function setUserLang(userId, lang) {
     db.run('UPDATE users SET lang = ? WHERE user_id = ?', [lang, userId]);
 }
 
+// تم إصلاح هذه الدالة لمنع أي خطأ تكرار في قاعدة البيانات
 function addUser(userId) {
-    db.get('SELECT user_id FROM users WHERE user_id = ?', [userId], (err, row) => {
-        if (!row) {
-            db.run('INSERT INTO users (user_id) VALUES (?)', [userId]);
-        }
-    });
+    db.run('INSERT OR IGNORE INTO users (user_id) VALUES (?)', [userId]);
 }
 
 function getAllUsers(callback) {
@@ -90,56 +86,54 @@ const texts = {
 async function checkSub(userId, channel) {
     if (!channel) return true;
     try {
-        const member = await bot.getChatMember(`@${channel}`, userId);
-        return ['member', 'administrator', 'creator'].includes(member.status);
+        const status = (await bot.getChatMember(`@${channel}`, userId)).status;
+        return ['member', 'administrator', 'creator'].includes(status);
     } catch (e) {
         return false;
     }
 }
 
-// --- رسالة البداية ---
 async function sendStartMessage(chatId, userId) {
     addUser(userId);
     getUserLang(userId, async (lang) => {
         getChannel(async (channel) => {
-            const isSubbed = await checkSub(userId, channel);
-            if (channel && !isSubbed) {
-                const opts = {
-                    reply_markup: {
-                        inline_keyboard: [
-                            [
-                                { text: texts[lang]["btn_sub"], url: `https://t.me/${channel}` },
-                                { text: texts[lang]["btn_check"], callback_data: "check" }
-                            ]
+            if (channel && !(await checkSub(userId, channel))) {
+                const btn = {
+                    inline_keyboard: [
+                        [
+                            { text: texts[lang]["btn_sub"], url: `https://t.me/${channel}` },
+                            { text: texts[lang]["btn_check"], callback_data: "check" }
                         ]
-                    }
+                    ]
                 };
-                bot.sendMessage(chatId, `${texts[lang]['sub']} @${channel}`, opts);
+                bot.sendMessage(chatId, `${texts[lang]['sub']} @${channel}`, { reply_markup: btn });
                 return;
             }
 
-            let keyboard = [
-                [
-                    { text: texts[lang]["dev"], url: 'https://t.me/ABOJL' },
-                    { text: texts[lang]["chan"], url: channel ? `https://t.me/${channel}` : 'https://t.me/ABOJLQ' }
-                ],
-                [
-                    { text: texts[lang]["btn_lang"], callback_data: `lang_${lang === 'ar' ? 'en' : 'ar'}` }
+            let ky = {
+                inline_keyboard: [
+                    [
+                        { text: texts[lang]["dev"], url: 'https://t.me/ABOJL' },
+                        { text: texts[lang]["chan"], url: channel ? `https://t.me/${channel}` : 'https://t.me/ABOJLQ' }
+                    ],
+                    [
+                        { text: texts[lang]["btn_lang"], callback_data: `lang_${lang === 'ar' ? 'en' : 'ar'}` }
+                    ]
                 ]
-            ];
+            };
 
             if (userId === ADMIN_ID) {
-                keyboard.push([
+                ky.inline_keyboard.push([
                     { text: texts[lang]["stats"], callback_data: 'stats' },
                     { text: texts[lang]["broad"], callback_data: 'broadcast' }
                 ]);
-                keyboard.push([
+                ky.inline_keyboard.push([
                     { text: texts[lang]["set_c"], callback_data: 'set_chan' },
                     { text: texts[lang]["rem_c"], callback_data: 'rem_chan' }
                 ]);
             }
 
-            bot.sendMessage(chatId, texts[lang]["start"], { reply_markup: { inline_keyboard: keyboard } });
+            bot.sendMessage(chatId, texts[lang]["start"], { reply_markup: ky });
         });
     });
 }
@@ -148,7 +142,6 @@ bot.onText(/\/start/, (msg) => {
     sendStartMessage(msg.chat.id, msg.from.id);
 });
 
-// --- الأزرار التفاعلية ---
 bot.on('callback_query', async (call) => {
     const userId = call.from_user.id;
     const chatId = call.message.chat.id;
@@ -158,32 +151,28 @@ bot.on('callback_query', async (call) => {
         const newLang = call.data.split("_")[1];
         setUserLang(userId, newLang);
         getChannel((channel) => {
-            let keyboard = [
-                [
-                    { text: texts[newLang]["dev"], url: 'https://t.me/ABOJL' },
-                    { text: texts[newLang]["chan"], url: channel ? `https://t.me/${channel}` : 'https://t.me/ABOJLQ' }
-                ],
-                [
-                    { text: texts[newLang]["btn_lang"], callback_data: `lang_${newLang === 'ar' ? 'en' : 'ar'}` }
+            let ky = {
+                inline_keyboard: [
+                    [
+                        { text: texts[newLang]["dev"], url: 'https://t.me/ABOJL' },
+                        { text: texts[newLang]["chan"], url: channel ? `https://t.me/${channel}` : 'https://t.me/ABOJLQ' }
+                    ],
+                    [
+                        { text: texts[newLang]["btn_lang"], callback_data: `lang_${newLang === 'ar' ? 'en' : 'ar'}` }
+                    ]
                 ]
-            ];
-
+            };
             if (userId === ADMIN_ID) {
-                keyboard.push([
+                ky.inline_keyboard.push([
                     { text: texts[newLang]["stats"], callback_data: 'stats' },
                     { text: texts[newLang]["broad"], callback_data: 'broadcast' }
                 ]);
-                keyboard.push([
+                ky.inline_keyboard.push([
                     { text: texts[newLang]["set_c"], callback_data: 'set_chan' },
                     { text: texts[newLang]["rem_c"], callback_data: 'rem_chan' }
                 ]);
             }
-
-            bot.editMessageText(texts[newLang]["start"], {
-                chat_id: chatId,
-                message_id: messageId,
-                reply_markup: { inline_keyboard: keyboard }
-            });
+            bot.editMessageText(texts[newLang]["start"], { chat_id: chatId, message_id: messageId, reply_markup: ky });
         });
     } else if (call.data === "rem_chan" && userId === ADMIN_ID) {
         setChannel("off", () => {
@@ -195,11 +184,11 @@ bot.on('callback_query', async (call) => {
                 bot.deleteMessage(chatId, messageId);
                 sendStartMessage(chatId, userId);
             } else {
-                bot.answerCallbackKey ? bot.answerCallbackQuery(call.id, { text: "❌", show_alert: true }) : bot.answerCallbackQuery(call.id, "❌", { show_alert: true });
+                bot.answerCallbackQuery(call.id, { text: "❌", show_alert: true });
             }
         });
     } else if (call.data === "set_chan" && userId === ADMIN_ID) {
-        bot.sendMessage(chatId, "أرسل يوزر القناة الجديد (بدون @):").then(() => {
+        bot.sendMessage(chatId, "أرسل يوزر القناة الجديد (بدون @):").then((sentMsg) => {
             const listener = (msg) => {
                 if (msg.from.id === userId) {
                     setChannel(msg.text, () => {
@@ -232,9 +221,8 @@ bot.on('callback_query', async (call) => {
     }
 });
 
-// --- معالجة الرسائل والروابط ---
 bot.on('message', async (msg) => {
-    if (!msg.text || msg.text.startsWith('/')) return;
+    if (!msg.text || msg.text.startsWith("/")) return;
     const userId = msg.from.id;
     const chatId = msg.chat.id;
 
@@ -242,7 +230,6 @@ bot.on('message', async (msg) => {
         if (!(await checkSub(userId, channel))) {
             return sendStartMessage(chatId, userId);
         }
-
         if (msg.text.startsWith("http")) {
             const wait = await bot.sendMessage(chatId, "⏳", { reply_to_message_id: msg.message_id });
             try {
@@ -254,11 +241,11 @@ bot.on('message', async (msg) => {
                 } else {
                     await bot.editMessageText("Error", { chat_id: chatId, message_id: wait.message_id });
                 }
-            } catch (error) {
+            } catch (e) {
                 await bot.editMessageText("Error", { chat_id: chatId, message_id: wait.message_id });
             }
         }
     });
 });
 
-console.log("البوت يعمل الآن على Node.js...");
+console.log("البوت يعمل الآن...");
