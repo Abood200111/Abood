@@ -141,9 +141,9 @@ bot.onText(/\/start/, (msg) => {
     sendStartMessage(msg.chat.id, msg.from.id);
 });
 
-// معالجة الأزرار بضمان الاستجابة الكاملة وعدم التوقف
+// معالجة الأزرار بالشكل الصحيح والسليم تماماً
 bot.on('callback_query', async (call) => {
-    const userId = call.from_user.id;
+    const userId = call.from.id; // تم التصحيح هنا لتعمل الأزرار بدون أي أخطاء
     const chatId = call.message.chat.id;
     const messageId = call.message.message_id;
 
@@ -260,7 +260,6 @@ bot.on('message', async (msg) => {
     });
 });
 
-// حماية كاملة ضد أي خطأ مفاجئ لكي لا يتوقف البوت نهائياً
 process.on('uncaughtException', (err) => {
     console.error('خطأ غير متوقع:', err);
 });
