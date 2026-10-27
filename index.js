@@ -1,5 +1,5 @@
 const TelegramBot = require('node-telegram-bot-api');
-const sqlite3 = require('sqlite3').verbose();
+const fs = require('fs');
 const axios = require('axios');
 
 // --- الإعدادات ---
@@ -7,52 +7,68 @@ const token = process.env.BOT_TOKEN || '6903487941:AAGFXw4074lMGMzc_HOHIeJQGuylD
 const bot = new TelegramBot(token, { polling: true });
 const ADMIN_ID = 700217964;
 
-// تخزين حالات المستخدمين لمنع انهيار السيرفر
-const userStates = {};
+// نظام تخزين محلي آمن يعتمد على ملف JSON (بدون أخطاء قاعدة البيانات)
+const DB_FILE = 'database.json';
 
-// --- تهيئة قاعدة البيانات ---
-const db = new sqlite3.Database('users.db', (err) => {
-    if (err) console.error('خطأ في فتح قاعدة البيانات:', err.message);
-});
+if (!fs.existsSync(DB_FILE)) {
+    fs.writeFileSync(DB_FILE, JSON.stringify({ users: {}, settings: { channel: "ABOJLQ" } }, null, 2));
+}
 
-db.serialize(() => {
-    db.run('CREATE TABLE IF NOT EXISTS users (user_id INTEGER PRIMARY KEY)');
-    db.run('ALTER TABLE users ADD COLUMN lang TEXT DEFAULT "ar"', (err) => { });
-    db.run('CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)');
-    db.run('INSERT OR IGNORE INTO settings VALUES ("channel", "ABOJLQ")');
-});
+function readDB() {
+    try {
+        const data = fs.readFileSync(DB_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (e) {
+        return { users: {}, settings: { channel: "ABOJLQ" } };
+    }
+}
+
+function writeDB(data) {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+    } catch (e) {}
+}
 
 function getChannel(callback) {
-    db.get('SELECT value FROM settings WHERE key="channel"', [], (err, row) => {
-        callback(row ? row.value : null);
-    });
+    const db = readDB();
+    callback(db.settings.channel || null);
 }
 
 function setChannel(username, callback) {
+    const db = readDB();
     const val = username && username !== "off" ? username.replace("@", "") : null;
-    db.run('UPDATE settings SET value = ? WHERE key = "channel"', [val], () => {
-        if (callback) callback();
-    });
+    db.settings.channel = val;
+    writeDB(db);
+    if (callback) callback();
 }
 
 function getUserLang(userId, callback) {
-    db.get('SELECT lang FROM users WHERE user_id = ?', [userId], (err, row) => {
-        callback(row && row.lang ? row.lang : "ar");
-    });
+    const db = readDB();
+    if (!db.users[userId]) {
+        db.users[userId] = { lang: "ar" };
+        writeDB(db);
+    }
+    callback(db.users[userId].lang || "ar");
 }
 
 function setUserLang(userId, lang) {
-    db.run('UPDATE users SET lang = ? WHERE user_id = ?', [lang, userId]);
+    const db = readDB();
+    if (!db.users[userId]) db.users[userId] = {};
+    db.users[userId].lang = lang;
+    writeDB(db);
 }
 
 function addUser(userId) {
-    db.run('INSERT OR IGNORE INTO users (user_id) VALUES (?)', [userId]);
+    const db = readDB();
+    if (!db.users[userId]) {
+        db.users[userId] = { lang: "ar" };
+        writeDB(db);
+    }
 }
 
 function getAllUsers(callback) {
-    db.all('SELECT user_id FROM users', [], (err, rows) => {
-        callback(rows ? rows.map(r => r.user_id) : []);
-    });
+    const db = readDB();
+    callback(Object.keys(db.users).map(id => Number(id)));
 }
 
 // --- النصوص والأيقونات ---
@@ -140,12 +156,14 @@ async function sendStartMessage(chatId, userId) {
     });
 }
 
+const userStates = {};
+
 bot.onText(/\/start/, (msg) => {
     delete userStates[msg.from.id];
     sendStartMessage(msg.chat.id, msg.from.id);
 });
 
-// معالجة الأزرار بشكل آمن وفوري
+// معالجة الأزرار
 bot.on('callback_query', async (call) => {
     const userId = call.from.id;
     const chatId = call.message.chat.id;
@@ -211,7 +229,7 @@ bot.on('callback_query', async (call) => {
     }
 });
 
-// معالجة الرسائل العادية ومدخلات الإدارة بنظام الحالات الآمن
+// معالجة الرسائل
 bot.on('message', async (msg) => {
     if (!msg.text) return;
     const userId = msg.from.id;
@@ -219,7 +237,6 @@ bot.on('message', async (msg) => {
 
     if (msg.text.startsWith("/")) return;
 
-    // التعامل مع حالات الإدارة (تغيير القناة أو الإذاعة)
     if (userStates[userId] === 'waiting_channel' && userId === ADMIN_ID) {
         delete userStates[userId];
         setChannel(msg.text, () => {
@@ -239,7 +256,6 @@ bot.on('message', async (msg) => {
         return;
     }
 
-    // التحقق من الاشتراك الإجباري وتحميل الفيديوهات
     getChannel(async (channel) => {
         if (!(await checkSub(userId, channel))) {
             return sendStartMessage(chatId, userId);
@@ -270,4 +286,4 @@ process.on('unhandledRejection', (reason, promise) => {
     console.error('رفض غير معالج:', reason);
 });
 
-console.log("البوت يعمل الآن بثبات تام وبدون أي أخطاء...");
+console.log("البوت يعمل الآن بثبات تام وبدون أخطاء...");
