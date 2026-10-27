@@ -1,1 +1,17 @@
-
+{
+  "name": "telegram-bot",
+  "version": "1.0.0",
+  "description": "Telegram Bot converted from Python",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "node-telegram-bot-api": "^0.66.0",
+    "sqlite3": "^5.1.7",
+    "axios": "^1.7.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
