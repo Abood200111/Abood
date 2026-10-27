@@ -141,13 +141,14 @@ bot.onText(/\/start/, (msg) => {
     sendStartMessage(msg.chat.id, msg.from.id);
 });
 
-// معالجة الأزرار بالشكل الصحيح والسليم تماماً
+// معالجة الأزرار مع الاستجابة الفورية لمنع أي تعليق أو توقف
 bot.on('callback_query', async (call) => {
-    const userId = call.from.id; // تم التصحيح هنا لتعمل الأزرار بدون أي أخطاء
+    const userId = call.from.id;
     const chatId = call.message.chat.id;
     const messageId = call.message.message_id;
 
     if (call.data.startsWith("lang_")) {
+        bot.answerCallbackQuery(call.id).catch(() => {});
         const newLang = call.data.split("_")[1];
         setUserLang(userId, newLang);
         getChannel((channel) => {
@@ -174,19 +175,17 @@ bot.on('callback_query', async (call) => {
             }
             bot.editMessageText(texts[newLang]["start"], { chat_id: chatId, message_id: messageId, reply_markup: ky }).catch(() => {});
         });
-        bot.answerCallbackQuery(call.id).catch(() => {});
     } 
     else if (call.data === "rem_chan" && userId === ADMIN_ID) {
-        setChannel("off", () => {
-            bot.answerCallbackQuery(call.id, { text: "تمت إزالة القناة بنجاح ✅", show_alert: true }).catch(() => {});
-        });
+        bot.answerCallbackQuery(call.id, { text: "تمت إزالة القناة بنجاح ✅", show_alert: true }).catch(() => {});
+        setChannel("off");
     } 
     else if (call.data === "check") {
+        bot.answerCallbackQuery(call.id).catch(() => {});
         getChannel(async (channel) => {
             if (await checkSub(userId, channel)) {
                 bot.deleteMessage(chatId, messageId).catch(() => {});
                 sendStartMessage(chatId, userId);
-                bot.answerCallbackQuery(call.id).catch(() => {});
             } else {
                 bot.answerCallbackQuery(call.id, { text: "❌ يجب الاشتراك بالقناة أولاً", show_alert: true }).catch(() => {});
             }
